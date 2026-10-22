@@ -1,0 +1,262 @@
+html<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>班級訂餐系統 (含個人查詢)</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f5f7fa; padding: 20px; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h2, h3 { color: #2c3e50; border-bottom: 2px solid #ecf0f1; padding-bottom: 8px; margin-top: 25px; }
+        
+        /* 菜單樣式 */
+        .menu-list { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        @media (max-width: 480px) { .menu-list { grid-template-columns: 1fr; } }
+        .menu-item { display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px; border-left: 4px solid #3498db; }
+        
+        /* 表單與防呆提示 */
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+        button { width: 100%; padding: 12px; background: #2ecc71; color: white; border: none; border-radius: 6px; font-size: 16px; cursor: pointer; font-weight: bold; margin-bottom: 5px; }
+        button:hover { background: #27ae60; }
+        .btn-search { background: #3498db; }
+        .btn-search:hover { background: #2980b9; }
+        .btn-clear { background: #95a5a6; font-size: 12px; padding: 5px; width: auto; float: right; margin-top: -35px; }
+        .btn-clear:hover { background: #7f8c8d; }
+        
+        .error-msg { color: #e74c3c; font-size: 14px; min-height: 20px; font-weight: bold; margin-bottom: 10px; }
+        .success-msg { color: #27ae60; font-size: 14px; min-height: 20px; font-weight: bold; margin-bottom: 10px; }
+
+        /* 查詢結果框 */
+        .search-result { background: #fff9db; padding: 15px; border-radius: 6px; border: 1px solid #fab005; font-size: 16px; font-weight: bold; min-height: 25px; display: none; margin-top: 10px; }
+
+        /* 報表樣式 */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; }
+        .summary { background: #e8f4fd; padding: 15px; border-radius: 6px; margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🍔 蘆竹便當店 - 班級點餐系統</h2>
+    
+    <!-- 1. 顯示內建菜單 -->
+    <h3>餐點菜單</h3>
+    <ul class="menu-list" id="menuDisplay"></ul>
+
+    <!-- 2. 點餐登記區 -->
+    <h3>點餐登記</h3>
+    <div>
+        <label for="seatNum">學生座號 (1 ~ 50)：</label>
+        <input type="number" id="seatNum" placeholder="請輸入座號" min="1" max="50">
+        
+        <label for="foodSelect">選擇餐點：</label>
+        <select id="foodSelect">
+            <option value="">-- 請選擇餐點 --</option>
+        </select>
+        
+        <div id="msgBox"></div>
+        <button onclick="addOrder()">送出登記</button>
+    </div>
+
+    <!-- 3. 個人餐點查詢區 (新增功能) -->
+    <h3>🔍 個人餐點查詢</h3>
+    <div>
+        <label for="searchSeatNum">輸入要查詢的座號 (1 ~ 50)：</label>
+        <input type="number" id="searchSeatNum" placeholder="請輸入您的座號" min="1" max="50">
+        <button class="btn-search" onclick="queryOrder()">開始查詢</button>
+        <div id="searchResult" class="search-result"></div>
+    </div>
+
+    <!-- 4. 結算報表區 -->
+    <h3>📊 結算報表 <button class="btn-clear" onclick="clearAllData()">清除所有點餐資料</button></h3>
+    <table>
+        <thead>
+            <tr>
+                <th>品項</th>
+                <th>單價</th>
+                <th>數量</th>
+                <th>小計</th>
+            </tr>
+        </thead>
+        <tbody id="reportTable"></tbody>
+    </table>
+
+    <div class="summary">
+        <p>總訂餐筆數：<span id="totalOrders">0</span> 筆</p>
+        <p>全班總金額：$<span id="totalAmount">0</span> 元</p>
+    </div>
+</div>
+
+<script>
+    // 內建 5 項菜單資料
+    const menuConfig = [
+        { id: 1, name: "排骨便當", price: 80 },
+        { id: 2, name: "雞腿便當", price: 85 },
+        { id: 3, name: "素食便當", price: 70 },
+        { id: 4, name: "滷肉飯",   price: 55 },
+        { id: 5, name: "貢丸湯",   price: 20 }
+    ];
+
+    // 用一個物件來儲存每位同學點的餐點：格式如 { "座號": [餐點ID, 餐點ID...] }
+    // 優先從瀏覽器快取讀取舊資料，若無則初始化
+    let orderRecords = JSON.parse(localStorage.getItem('orderRecords')) || {};
+
+    // 初始化網頁
+    function init() {
+        const menuDisplay = document.getElementById('menuDisplay');
+        const foodSelect = document.getElementById('foodSelect');
+        
+        menuConfig.forEach(item => {
+            menuDisplay.innerHTML += `<li class="menu-item"><span>${item.id}. ${item.name}</span> <span>$${item.price}</span></li>`;
+            foodSelect.innerHTML += `<option value="${item.id}">${item.id}. ${item.name} ($${item.price})</option>`;
+        });
+        updateReport();
+    }
+
+    // 訂餐登記
+    function addOrder() {
+        const seatInput = document.getElementById('seatNum');
+        const foodSelect = document.getElementById('foodSelect');
+        const msgBox = document.getElementById('msgBox');
+        
+        const seat = parseInt(seatInput.value);
+        const foodId = parseInt(foodSelect.value);
+
+        // 驗證座號 (1~50)
+        if (isNaN(seat) || seat < 1 || seat > 50) {
+            msgBox.className = "error-msg";
+            msgBox.innerText = "❌ 錯誤：座號必須在 1 到 50 之間！";
+            return;
+        }
+
+        // 驗證餐點
+        if (isNaN(foodId) || foodId < 1 || foodId > 5) {
+            msgBox.className = "error-msg";
+            msgBox.innerText = "❌ 錯誤：請選擇有效的餐點！";
+            return;
+        }
+
+        // 登記成功：將資料存入該座號的陣列中（允許重複點多樣，例如點一個便當+一碗湯）
+        if (!orderRecords[seat]) {
+            orderRecords[seat] = [];
+        }
+        orderRecords[seat].push(foodId);
+
+        // 存入瀏覽器快取
+        localStorage.setItem('orderRecords', JSON.stringify(orderRecords));
+
+        const selectedItem = menuConfig.find(item => item.id === foodId);
+        msgBox.className = "success-msg";
+        msgBox.innerText = `慶 登記成功！座號 ${seat} 點購了 ${selectedItem.name}`;
+        
+        // 清空輸入
+        seatInput.value = "";
+        foodSelect.value = "";
+
+        updateReport();
+    }
+
+    // 個人餐點查詢功能
+    function queryOrder() {
+        const searchInput = document.getElementById('searchSeatNum');
+        const resultBox = document.getElementById('searchResult');
+        const seat = parseInt(searchInput.value);
+
+        if (isNaN(seat) || seat < 1 || seat > 50) {
+            resultBox.style.display = "block";
+            resultBox.style.borderColor = "#e74c3c";
+            resultBox.style.backgroundColor = "#fadbd8";
+            resultBox.innerHTML = "<span style='color:#e74c3c;'>❌ 請輸入 1 ~ 50 之間的有效座號進行查詢！</span>";
+            return;
+        }
+
+        resultBox.style.display = "block";
+        resultBox.style.borderColor = "#fab005";
+        resultBox.style.backgroundColor = "#fff9db";
+
+        // 檢查該座號是否有訂餐紀錄
+        if (!orderRecords[seat] || orderRecords[seat].length === 0) {
+            resultBox.innerHTML = `💁‍♂️ 座號 ${seat} 同學：您目前【尚未點餐】。`;
+        } else {
+            // 統計該同學點了哪些東西
+            let personalSummary = {};
+            let personalCost = 0;
+
+            orderRecords[seat].forEach(foodId => {
+                const item = menuConfig.find(m => m.id === foodId);
+                personalSummary[item.name] = (personalSummary[item.name] || 0) + 1;
+                personalCost += item.price;
+            });
+
+            // 組裝成易讀的文字
+            let detailText = "";
+            for (const [name, count] of Object.entries(personalSummary)) {
+                detailText += `${name} x ${count} 份、`;
+            }
+            detailText = detailText.slice(0, -1); // 去掉最後一個頓號
+
+            resultBox.innerHTML = `
+                📌 查詢結果【座號 ${seat}】：<br>
+                已點餐點：<span style="color:#2980b9;">${detailText}</span><br>
+                個人應付總金額：<span style="color:#e67e22;">$${personalCost}</span> 元
+            `;
+        }
+    }
+
+    // 重新計算並渲染結算報表
+    function updateReport() {
+        const reportTable = document.getElementById('reportTable');
+        let totalAmount = 0;
+        let totalOrders = 0;
+
+        // 初始化用於統計各品項數量的物件
+        let itemCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+
+        // 遍歷所有座號的點餐紀錄進行累加
+        for (const seat in orderRecords) {
+            orderRecords[seat].forEach(foodId => {
+                itemCounts[foodId]++;
+                totalOrders++;
+            });
+        }
+        
+        reportTable.innerHTML = "";
+        
+        menuConfig.forEach(item => {
+            const count = itemCounts[item.id];
+            const subtotal = item.price * count;
+            totalAmount += subtotal;
+            
+            reportTable.innerHTML += `
+                <tr>
+                    <td>${item.name}</td>
+                    <td>$${item.price}</td>
+                    <td>${count} 份</td>
+                    <td>$${subtotal}</td>
+                </tr>
+            `;
+        });
+
+        document.getElementById('totalOrders').innerText = totalOrders;
+        document.getElementById('totalAmount').innerText = totalAmount;
+    }
+
+    // 清除資料功能
+    function clearAllData() {
+        if (confirm("確定要清除全班所有的點餐紀錄嗎？（清除後無法復原）")) {
+            orderRecords = {};
+            localStorage.removeItem('orderRecords');
+            document.getElementById('msgBox').innerText = "";
+            document.getElementById('searchResult').style.display = "none";
+            updateReport();
+        }
+    }
+
+    init();
+</script>
+
+</body>
+</html>
